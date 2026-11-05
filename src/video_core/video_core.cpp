@@ -33,6 +33,12 @@ std::unique_ptr<VideoCore::RendererBase> CreateRenderer(Core::System& system, Co
         return std::make_unique<OpenGL::RendererOpenGL>(emu_window, device_memory, gpu, std::move(context));
 #endif
     case Settings::RendererBackend::Vulkan:
+        if (const char* val = std::getenv("EDEN_NX2_FRAME_GEN"); val && val[0] == '1') {
+            Settings::values.frame_gen.SetValue(true);
+            Settings::values.frame_gen_type.SetValue(Settings::FrameGenType::Fsr3);
+            Settings::values.frame_gen_multiplier.SetValue(2);
+            Settings::values.frame_gen_target_rate.SetValue(0);
+        }
         return std::make_unique<Vulkan::RendererVulkan>(emu_window, device_memory, gpu, std::move(context));
     case Settings::RendererBackend::Null:
         return std::make_unique<Null::RendererNull>(emu_window, gpu, std::move(context));
