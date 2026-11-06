@@ -467,7 +467,8 @@ num_pipeline_workers{device.HasBrokenParallelShaderCompiling() ? 1ULL
       workers(num_pipeline_workers,
               "VkPipelineBuilder", {}, Common::ThreadPlacement::Background),
       serialization_thread(1, "VkPipelineSerialization", {},
-                           Common::ThreadPlacement::Background) {
+                           Common::ThreadPlacement::Background),
+      background_pipelines{64, 16 * 1024 * 1024, device.HasBrokenParallelShaderCompiling()} {
     const auto& float_control{device.FloatControlProperties()};
     const VkDriverId driver_id{device.GetDriverID()};
     const VkShaderStageFlags subgroup_stages{device.GetSubgroupSupportedStages()};
@@ -737,6 +738,7 @@ bool PreloadAllPipelines() {
 } // Anonymous namespace
 
 PipelineCache::~PipelineCache() {
+    background_pipelines.Stop();
     workers.WaitForRequests();
     serialization_thread.WaitForRequests();
     SaveUsedPipelines();
@@ -839,6 +841,8 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
         return;
     }
     if (!pipeline_cache_filename.empty()) {
+        background_pipelines.Stop();
+        workers.WaitForRequests();
         serialization_thread.WaitForRequests();
         if (use_vulkan_pipeline_cache && !vulkan_pipeline_cache_filename.empty()) {
             SerializeVulkanPipelineCache(vulkan_pipeline_cache_filename, vulkan_pipeline_cache,
@@ -859,6 +863,7 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
     used_pipelines = LoadUsedPipelines(used_pipelines_filename, MaxUsedPipelineAge(device));
     used_pipelines_saved = std::chrono::steady_clock::now();
     size_t skipped_pipelines = 0;
+    size_t deferred_pipelines = 0;
     size_t queued_graphics = 0;
 
     if (use_vulkan_pipeline_cache) {
@@ -944,6 +949,28 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
             (used_pipelines.empty() ? queued_graphics >= MaxPipelinesWithoutUsedList
                                     : !used_pipelines.contains(hash))) {
             ++skipped_pipelines;
+            size_t capture_bytes = (envs.capacity() - envs.size()) * sizeof(FileEnvironment);
+            for (const auto& env : envs) {
+                capture_bytes += env.MemorySize();
+            }
+            if (background_pipelines.Add(
+                    key, capture_bytes, [this, key, envs = std::move(envs)]() mutable {
+                        ShaderPools pools;
+                        boost::container::static_vector<Shader::Environment*,
+                                                        Maxwell::MaxShaderProgram>
+                            env_ptrs;
+                        for (auto& env : envs) {
+                            env_ptrs.push_back(&env);
+                        }
+                        auto pipeline =
+                            CreateGraphicsPipeline(pools, key, MakeSpan(env_ptrs), nullptr, false);
+                        if (pipeline && pipeline->Failed()) {
+                            return std::unique_ptr<GraphicsPipeline>{};
+                        }
+                        return pipeline;
+                    })) {
+                ++deferred_pipelines;
+            }
             return;
         }
         ++queued_graphics;
@@ -974,8 +1001,8 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
     LOG_INFO(Render_Vulkan, "Total Pipeline Count: {}", state.total);
     if (skipped_pipelines != 0) {
         LOG_INFO(Render_Vulkan,
-                 "{} cached graphics pipelines are built when first needed",
-                 skipped_pipelines);
+                 "{} cached graphics pipelines skipped at boot, {} admitted for background prebuild",
+                 skipped_pipelines, deferred_pipelines);
     }
 
     std::unique_lock lock{state.mutex};
@@ -996,6 +1023,11 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
 
     if (state.statistics) {
         state.statistics->Report();
+    }
+    if (stop_loading.stop_requested()) {
+        background_pipelines.Stop();
+    } else {
+        background_pipelines.Start(std::clamp<size_t>(num_pipeline_workers / 4, 1, 2));
     }
 }
 
@@ -1088,7 +1120,10 @@ GraphicsPipeline* PipelineCache::CurrentGraphicsPipelineSlowPath() {
     auto& pipeline{pair->second};
     if (is_new) {
         ReportNewPipelineKey(graphics_key);
-        pipeline = CreateGraphicsPipeline();
+        pipeline = background_pipelines.Take(graphics_key);
+        if (!pipeline) {
+            pipeline = CreateGraphicsPipeline();
+        }
     }
     if (!pipeline) {
         return nullptr;
@@ -1120,11 +1155,15 @@ void PipelineCache::TickFrame() {
 }
 
 void PipelineCache::EvictUnusedPipelines() {
-    // Building a pipeline again on MoltenVK means a Metal compile mid-game, far dearer than the
-    // 2-3 ms below, so none are evicted there.
-    if (device.IsMoltenVK()) {
+    static const bool disable_eviction = [] {
+        const char* val = std::getenv("EDEN_NX2_NO_PIPELINE_EVICTION");
+        return val != nullptr && val[0] == '1';
+    }();
+    if (disable_eviction || device.IsMoltenVK()) {
         return;
     }
+    // Building a pipeline again on MoltenVK means a Metal compile mid-game, far dearer than the
+    // 2-3 ms below, so none are evicted there.
     // Each built pipeline holds ~0.45 MB of driver memory and none was ever destroyed, so it grew
     // with every place a session went (title 1: 1,500 on its title screen alone). One unused for
     // this long is destroyed; it takes 2-3 ms to build again from the driver's pipeline cache.
