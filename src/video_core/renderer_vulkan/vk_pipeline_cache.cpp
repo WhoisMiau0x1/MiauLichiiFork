@@ -1168,7 +1168,10 @@ void PipelineCache::TickFrame() {
 void PipelineCache::EvictUnusedPipelines() {
     static const bool disable_eviction = [] {
         const char* val = std::getenv("EDEN_NX2_NO_PIPELINE_EVICTION");
-        return val != nullptr && val[0] == '1';
+        if (val != nullptr) {
+            return val[0] == '1';
+        }
+        return true;
     }();
     if (disable_eviction || device.IsMoltenVK()) {
         return;

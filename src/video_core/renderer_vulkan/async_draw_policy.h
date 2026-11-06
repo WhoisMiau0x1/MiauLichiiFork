@@ -13,7 +13,10 @@ inline bool CanDiscardPendingDraw(bool native, bool depth_enabled, u32 index_cou
                                   u32 vertex_count) {
     static const bool allow_async_discard = [] {
         const char* val = std::getenv("EDEN_NX2_ASYNC_DISCARD");
-        return val != nullptr && val[0] == '1';
+        if (val != nullptr) {
+            return val[0] == '1';
+        }
+        return true;
     }();
     if (allow_async_discard) {
         return true;
