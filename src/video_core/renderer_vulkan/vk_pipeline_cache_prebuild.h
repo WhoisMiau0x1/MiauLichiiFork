@@ -20,6 +20,7 @@ class PipelinePrebuild {
     struct Entry {
         std::unique_ptr<EmissionBudget::Reservation> reservation;
         std::unique_ptr<Pipeline> pipeline;
+        size_t capture_bytes{};
         bool claimed{};
     };
 
@@ -34,59 +35,80 @@ public:
     }
 
     bool Add(const Key& key, size_t capture_bytes, Build build) {
-        if (started || stopped || entries.contains(key) ||
-            capture_bytes > capture_limit - captured_bytes) {
-            return false;
-        }
-        auto reservation = budget.TryAcquire(true, true);
-        if (!reservation) {
-            return false;
-        }
-        auto entry = std::make_shared<Entry>();
-        entry->reservation = std::move(reservation);
-        entries.emplace(key, entry);
-        captured_bytes += capture_bytes;
-        tasks.emplace_back([this, key, entry, build = std::move(build)]() mutable {
-            bool run;
-            {
-                std::scoped_lock lock{mutex};
-                run = !stopped && !entry->claimed;
+        std::unique_ptr<EmissionBudget::Reservation> reservation;
+        std::shared_ptr<Entry> entry;
+        Common::UniqueFunction<void> task;
+        bool queue_to_workers = false;
+        {
+            std::scoped_lock lock{mutex};
+            if (stopped || entries.contains(key) ||
+                capture_bytes > capture_limit - captured_bytes) {
+                return false;
             }
-            std::unique_ptr<Pipeline> pipeline;
-            if (run) {
-                try {
-                    pipeline = build();
-                } catch (const std::exception& exception) {
-                    LOG_ERROR(Render_Vulkan, "Cached pipeline prebuild failed: {}",
-                              exception.what());
-                } catch (...) {
-                    LOG_ERROR(Render_Vulkan, "Cached pipeline prebuild failed");
+            reservation = budget.TryAcquire(true, true);
+            if (!reservation) {
+                return false;
+            }
+            entry = std::make_shared<Entry>();
+            entry->reservation = std::move(reservation);
+            entry->capture_bytes = capture_bytes;
+            entries.emplace(key, entry);
+            captured_bytes += capture_bytes;
+            task = [this, key, entry, build = std::move(build)]() mutable {
+                bool run;
+                {
+                    std::scoped_lock lock{mutex};
+                    run = !stopped && !entry->claimed;
                 }
-            }
-            build = {};
-            {
-                std::scoped_lock lock{mutex};
-                if (!stopped && !entry->claimed && pipeline) {
-                    entry->pipeline = std::move(pipeline);
-                } else if (!entry->claimed) {
-                    entries.erase(key);
+                std::unique_ptr<Pipeline> pipeline;
+                if (run) {
+                    try {
+                        pipeline = build();
+                    } catch (const std::exception& exception) {
+                        LOG_ERROR(Render_Vulkan, "Cached pipeline prebuild failed: {}",
+                                  exception.what());
+                    } catch (...) {
+                        LOG_ERROR(Render_Vulkan, "Cached pipeline prebuild failed");
+                    }
                 }
+                build = {};
+                {
+                    std::scoped_lock lock{mutex};
+                    if (!stopped && !entry->claimed && pipeline) {
+                        entry->pipeline = std::move(pipeline);
+                    } else if (!entry->claimed) {
+                        captured_bytes -= entry->capture_bytes;
+                        entries.erase(key);
+                    }
+                }
+            };
+            if (started && workers) {
+                queue_to_workers = true;
+            } else {
+                tasks.emplace_back(std::move(task));
             }
-        });
+        }
+        if (queue_to_workers) {
+            workers->QueueWork(std::move(task));
+        }
         return true;
     }
 
     void Start(size_t threads) {
-        if (started || stopped || tasks.empty() || threads == 0) {
-            return;
+        std::vector<Common::UniqueFunction<void>> pending;
+        {
+            std::scoped_lock lock{mutex};
+            if (started || stopped || threads == 0) {
+                return;
+            }
+            started = true;
+            workers.reset(new Common::ThreadWorker(threads, "VkPipelinePrebuild", {},
+                                                   Common::ThreadPlacement::Background));
+            pending = std::move(tasks);
         }
-        started = true;
-        workers.reset(new Common::ThreadWorker(threads, "VkPipelinePrebuild", {},
-                                               Common::ThreadPlacement::Background));
-        for (auto& task : tasks) {
+        for (auto& task : pending) {
             workers->QueueWork(std::move(task));
         }
-        tasks.clear();
     }
 
     std::unique_ptr<Pipeline> Take(const Key& key) {
@@ -94,11 +116,12 @@ public:
         {
             std::scoped_lock lock{mutex};
             const auto it = entries.find(key);
-            if (it == entries.end()) {
+            if (it == entries.end() || !it->second->pipeline) {
                 return nullptr;
             }
             entry = std::move(it->second);
             entries.erase(it);
+            captured_bytes -= entry->capture_bytes;
             entry->claimed = true;
         }
         return std::move(entry->pipeline);

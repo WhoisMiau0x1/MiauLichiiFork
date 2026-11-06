@@ -468,7 +468,7 @@ num_pipeline_workers{device.HasBrokenParallelShaderCompiling() ? 1ULL
               "VkPipelineBuilder", {}, Common::ThreadPlacement::Background),
       serialization_thread(1, "VkPipelineSerialization", {},
                            Common::ThreadPlacement::Background),
-      background_pipelines{64, 16 * 1024 * 1024, device.HasBrokenParallelShaderCompiling()} {
+      background_pipelines{256, 128 * 1024 * 1024, device.HasBrokenParallelShaderCompiling()} {
     const auto& float_control{device.FloatControlProperties()};
     const VkDriverId driver_id{device.GetDriverID()};
     const VkShaderStageFlags subgroup_stages{device.GetSubgroupSupportedStages()};
@@ -731,7 +731,10 @@ constexpr size_t MaxPipelinesWithoutUsedList = 3000;
 bool PreloadAllPipelines() {
     static const bool all = [] {
         const char* value = std::getenv("EDEN_NX2_PRELOAD_ALL_PIPELINES");
-        return value != nullptr && value[0] == '1';
+        if (value != nullptr) {
+            return value[0] == '1';
+        }
+        return true;
     }();
     return all;
 }
@@ -1038,7 +1041,7 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
     if (stop_loading.stop_requested()) {
         background_pipelines.Stop();
     } else {
-        background_pipelines.Start(std::clamp<size_t>(num_pipeline_workers / 4, 1, 2));
+        background_pipelines.Start(std::clamp<size_t>(num_pipeline_workers / 2, 2, 8));
     }
 }
 
@@ -1133,8 +1136,51 @@ GraphicsPipeline* PipelineCache::CurrentGraphicsPipelineSlowPath() {
         ReportNewPipelineKey(graphics_key);
         pipeline = background_pipelines.Take(graphics_key);
         if (!pipeline) {
+            if (use_asynchronous_shaders) {
+                GraphicsEnvironments environments;
+                GetGraphicsEnvironments(environments, graphics_key.unique_hashes);
+                constexpr size_t capture_bytes = sizeof(GraphicsEnvironments);
+                const bool in_disk = disk_pipelines.contains(graphics_key.Hash());
+                if (!in_disk) {
+                    disk_pipelines.insert(graphics_key.Hash());
+                }
+                if (background_pipelines.Add(
+                        graphics_key, capture_bytes,
+                        [this, key = graphics_key, envs = std::move(environments.envs), in_disk]() mutable {
+                            ShaderPools pools;
+                            boost::container::static_vector<Shader::Environment*, Maxwell::MaxShaderProgram> env_ptrs;
+                            for (size_t index = 0; index < Maxwell::MaxShaderProgram; ++index) {
+                                if (key.unique_hashes[index] != 0) {
+                                    env_ptrs.push_back(&envs[index]);
+                                }
+                            }
+                            auto p = CreateGraphicsPipeline(pools, key, MakeSpan(env_ptrs), nullptr, false);
+                            if (p && p->Failed()) {
+                                return std::unique_ptr<GraphicsPipeline>{};
+                            }
+                            if (p && !pipeline_cache_filename.empty()) {
+                                if (!in_disk) {
+                                    serialization_thread.QueueWork([this, key, envs = std::move(envs)] {
+                                        boost::container::static_vector<const GenericEnvironment*, Maxwell::MaxShaderProgram> s_ptrs;
+                                        for (size_t index = 0; index < Maxwell::MaxShaderProgram; ++index) {
+                                            if (key.unique_hashes[index] != 0) {
+                                                s_ptrs.push_back(&envs[index]);
+                                            }
+                                        }
+                                        SerializePipeline(key, s_ptrs, pipeline_cache_filename, CACHE_VERSION);
+                                    });
+                                }
+                                QueueVulkanPipelineCacheFlush();
+                            }
+                            return p;
+                        })) {
+                    return nullptr;
+                }
+            }
             pipeline = CreateGraphicsPipeline();
         }
+    } else if (!pipeline) {
+        pipeline = background_pipelines.Take(graphics_key);
     }
     if (!pipeline) {
         return nullptr;
