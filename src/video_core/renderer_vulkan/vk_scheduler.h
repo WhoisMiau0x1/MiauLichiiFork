@@ -183,10 +183,16 @@ public:
         if (VideoCommon::GpuSplit::check_owner) [[unlikely]] {
             VideoCommon::GpuSplit::CheckOwner("Scheduler::Record");
         }
+        if (!chunk) [[unlikely]] {
+            AcquireNewChunk();
+        }
         if (chunk->Record(command)) {
             return;
         }
         DispatchWork();
+        if (!chunk) [[unlikely]] {
+            AcquireNewChunk();
+        }
         (void)chunk->Record(command);
     }
 
@@ -236,9 +242,13 @@ public:
         const bool trace = Common::DkbFrameTrace::Enabled() && target_fps > 0.0;
         const auto trace_start = trace ? std::chrono::steady_clock::now()
                                        : std::chrono::steady_clock::time_point{};
-        if (tick > 0 && (may_flush || WaitForSubmission(tick))) {
-            if (tick >= master_semaphore->CurrentTick()) {
-                Flush();
+        if (tick > 0) {
+            if (may_flush) {
+                if (tick >= master_semaphore->CurrentTick()) {
+                    Flush();
+                }
+            } else {
+                (void)WaitForSubmission(tick);
             }
             master_semaphore->Wait(tick);
         }
