@@ -749,6 +749,13 @@ bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
         scheduler.NoteRenderPassStores();
     }
     if (!IsBuilt()) {
+        static const bool allow_async_discard = [] {
+            const char* val = std::getenv("EDEN_NX2_ASYNC_DISCARD");
+            return val != nullptr && val[0] == '1';
+        }();
+        if (allow_async_discard) {
+            return false;
+        }
         // Wait for the pipeline to be built
         scheduler.Record([this](vk::CommandBuffer) {
             const auto begin = std::chrono::steady_clock::now();
