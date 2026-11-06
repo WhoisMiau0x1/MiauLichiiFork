@@ -808,7 +808,7 @@ struct Memory::Impl {
             }
             ++UnmappedReadFlag();
         }, [&]() {
-            if (!ReadTrapsEnabled() || ReadTrapArmed(addr & 0xffffffffffffULL, sizeof(T))) {
+            if (ReadTrapsEnabled() && ReadTrapArmed(addr & 0xffffffffffffULL, sizeof(T))) {
                 HandleRasterizerDownload(addr, sizeof(T));
             }
         }); ptr) [[likely]] {
@@ -881,6 +881,9 @@ struct Memory::Impl {
     }
 
     void HandleRasterizerDownload(VAddr v_address, size_t size) {
+        if (!Settings::values.use_reactive_flushing.GetValue() || Settings::CurrentProgramIsSwitch2()) {
+            return;
+        }
         const auto* p = GetPointerImpl(
             v_address, []() {}, []() {});
         if (!gpu_device_memory) [[unlikely]] {
