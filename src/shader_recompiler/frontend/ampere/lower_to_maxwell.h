@@ -58,7 +58,7 @@ inline LoweredProgram LowerToMaxwellWith(std::span<const Instruction> code, u32 
     const u64 native_code_address = options.native_code_address;
     LoweredProgram result;
     // UR28 and up (when used) live just below R216: UR28 at R(216 - high_uniforms).
-    const u32 high_uniform_base = 216 - high_uniforms;
+    const u32 high_uniform_base = 216 - ((high_uniforms + 3) & ~3U);
     struct Relocation { u32 output_index; s64 target; bool call = false; u32 output_target = ~0U; };
     std::vector<Relocation> relocations;
     std::vector<u32> barrier_tokens;
@@ -308,7 +308,7 @@ inline LoweredProgram LowerToMaxwellWith(std::span<const Instruction> code, u32 
             // Bits 32-39 name a register in register forms and in these opcodes: TEX/TLD, the
             // stores, and the data operand of ISBEWR (0x927), RED (0x98e) and SURED (0x59f), all
             // three listed with operand 32 in RegisterPressure.
-            if (bit == 32 && insn.Bits(9, 3) != 1 && opcode != 0xb60 && opcode != 0xb66 && opcode != 0x986 && opcode != 0x987 && opcode != 0xf66 && opcode != 0x988 && opcode != 0x927 && opcode != 0x98e && opcode != 0x59f) continue;
+            if (bit == 32 && insn.Bits(9, 3) != 1 && opcode != 0xb60 && opcode != 0xb66 && opcode != 0x986 && opcode != 0x987 && opcode != 0xf66 && opcode != 0x988 && opcode != 0x927 && opcode != 0x98e && opcode != 0x59f && opcode != 0x219) continue;
             const u32 reg = insn.Bits(bit, 8);
             if (reg >= (uses_uniform_bank ? high_uniform_base : 246U) && reg < 255)
                 requires_shadow = true;
