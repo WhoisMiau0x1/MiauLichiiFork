@@ -3,16 +3,22 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdlib>
 
 #include "common/common_types.h"
 
 namespace Vulkan {
 
-constexpr bool CanDiscardPendingDraw(bool native, bool depth_enabled, u32 index_count,
-                                    u32 vertex_count) {
-    // Native draws can produce persistent resources, even with depth enabled.
+inline bool CanDiscardPendingDraw(bool native, bool depth_enabled, u32 index_count,
+                                  u32 vertex_count) {
     if (native) {
-        return false;
+        static const bool allow_native = [] {
+            const char* val = std::getenv("EDEN_NX2_ASYNC_DISCARD");
+            return val != nullptr && val[0] == '1';
+        }();
+        if (!allow_native) {
+            return false;
+        }
     }
     // Preserve the legacy async-shader heuristic.
     return depth_enabled || (index_count > 6 && vertex_count > 6);
