@@ -505,7 +505,7 @@ struct Memory::Impl {
             // them a CPU read of GPU-written memory can see stale data.
             static const bool nx2_no_reactive = [] {
                 const char* value = std::getenv("EDEN_NX2_NO_REACTIVE");
-                return value != nullptr && value[0] == '1';
+                return value == nullptr || value[0] != '0';
             }();
             const bool reactive_flushing =
                 Settings::values.use_reactive_flushing.GetValue() &&

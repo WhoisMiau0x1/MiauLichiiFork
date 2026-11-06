@@ -1136,7 +1136,7 @@ GraphicsPipeline* PipelineCache::CurrentGraphicsPipelineSlowPath() {
         ReportNewPipelineKey(graphics_key);
         pipeline = background_pipelines.Take(graphics_key);
         if (!pipeline) {
-            if (use_asynchronous_shaders) {
+            {
                 GraphicsEnvironments environments;
                 GetGraphicsEnvironments(environments, graphics_key.unique_hashes);
                 constexpr size_t capture_bytes = sizeof(GraphicsEnvironments);
