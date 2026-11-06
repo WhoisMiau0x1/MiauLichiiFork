@@ -226,9 +226,6 @@ struct GPU::Impl {
     }
 
     VideoCore::RasterizerDownloadArea OnCPURead(DAddr addr, u64 size) {
-        if (!Settings::values.use_reactive_flushing.GetValue() || Settings::CurrentProgramIsSwitch2()) {
-            return {};
-        }
         auto raster_area = renderer->ReadRasterizer()->GetFlushArea(addr, size);
         if (raster_area.preemtive) {
             return raster_area;
