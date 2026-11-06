@@ -1,38 +1,37 @@
-# Switch NX2 - read when the Lichii GUI starts.
-# One NAME=VALUE per line. Lines starting with # are ignored.
-# A variable already set in the environment wins over this file.
-# Between files, the user copy (%APPDATA%\eden\nx2_switches.txt, or
-# $XDG_CONFIG_HOME/eden/nx2_switches.txt) wins over this one, so editing this file is never
-# needed: copy the lines you want into your own and restart.
-#
-# Restart the emulator after editing.
+# Switch NX2 Performance Tuning - Optimized for Zelda: Ocarina of Time (Switch 2)
+# Environment: RTX 5060 + Intel Core i9-11900RH
 
-# --- Performance tuning defaults for Switch 2 ---
-# Offload GPU method/macro execution to the back thread (SPLIT=2 delivers up to +54% FPS alone).
+# 1. Thread Splitting (Offload GPU methods to back thread, up to +54% FPS)
 EDEN_NX2_SPLIT=2
 
-# Batch GPU fence syncpoints to reduce host driver overhead and smooth frametimes.
+# 2. Batch GPU fences to reduce driver latency
 EDEN_NX2_FENCE_BATCH=1
 
-# Leave buffer downloads disabled on Switch 2 (default): forcing downloads (=1) copies back
-# 90-220 MB/s of buffers CPU never touches, causing heavy mutex contention and dropping FPS by ~38-63%.
-#EDEN_NX2_BUFFER_DOWNLOADS=1
+# 3. Cap GPU-written SSBO mark (Stops 240+ MB/s of PCIe fence download flood on Kokiri Forest vegetation)
+EDEN_NX2_WRITTEN_SSBO_MARK_KIB=128
 
-# Paces frame submission 2 frames ahead. Reduces frametime spikes, but adds ~1-2 frames of input latency.
-# Enable only if frame pacing stability is preferred over responsive controls.
-#EDEN_NX2_FRAMES_AHEAD=2
+# 4. Turing MME Macro JIT compiler enabled
+EDEN_NX2_MME_JIT=1
 
-# --- Workarounds / Debug ---
-# Terrain/indirect drawing fix for Donkey Kong Bananza: enabled by default. Set to 0 only to leave to GPU.
-#EDEN_NX2_RESETFIX=0
+# 5. Cap ASTC transcode threads to prevent CPU core starvation
+EDEN_NX2_TRANSCODE_THREADS=4
 
-# Drop reactive-flushing read traps on Switch 2 programs (opt-in; can reduce FPS from 29 to 24 in MKW).
-#EDEN_NX2_NO_REACTIVE=1
+# 6. Fog, Atmosphere & Pipeline Corrections (Fixes overblown white bloom / washed-out fog)
+EDEN_NX2_A2C_REFRESH=1
+EDEN_NX2_MESH_FIRST=1
+EDEN_NX2_OOT_VISUAL_WORKAROUND=1
 
-#EDEN_NX2_MME_JIT=0
-#EDEN_NX2_PBFLUSH=0
-#EDEN_NX2_SKIP_SAME=0
-#EDEN_NX2_INLINE_DEFER=0
-#EDEN_NX2_SPLIT_SKIP=1
-#EDEN_NX2_AUTO_STUB=1
-#EDEN_NX2_KEEP_ASTC=1
+# 7. DLSS / Streamline Hardware Upscaling
+EDEN_NX2_DLSS_REPLACEMENT=dlss
+EDEN_NX2_DLSS_PRESET=default
+EDEN_NX2_DLSS_HDR=0
+EDEN_NX2_DLSS_AUTO_EXPOSURE=0
+
+# 8. Force FSR3 Frame Generation 2x on startup
+EDEN_NX2_FRAME_GEN=1
+
+# 9. Preload ALL cached disk pipelines at startup so zero cached shaders stall during gameplay
+EDEN_NX2_PRELOAD_ALL_PIPELINES=1
+
+# 10. Non-blocking asynchronous shader compilation (prevents 0 FPS freezes on new shaders)
+EDEN_NX2_ASYNC_DISCARD=1

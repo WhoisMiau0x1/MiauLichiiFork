@@ -16,9 +16,7 @@ inline bool CanDiscardPendingDraw(bool native, bool depth_enabled, u32 index_cou
             const char* val = std::getenv("EDEN_NX2_ASYNC_DISCARD");
             return val != nullptr && val[0] == '1';
         }();
-        if (!allow_native) {
-            return false;
-        }
+        if (allow_native) { return true; } return false;
     }
     // Preserve the legacy async-shader heuristic.
     return depth_enabled || (index_count > 6 && vertex_count > 6);
