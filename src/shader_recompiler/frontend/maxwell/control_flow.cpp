@@ -458,10 +458,25 @@ CFG::AnalysisState CFG::AnalyzeBRX(Block* block, Location pc, Instruction inst, 
 
     block->indirect_branches.reserve(targets.size());
     for (const u32 target : targets) {
-        Block* const branch{AddLabel(block, block->stack, env.TranslateProgramAddress(target), function_id)};
+        u32 translated_target = target;
+        try {
+            translated_target = env.TranslateProgramAddress(target);
+        } catch (const Shader::RuntimeError&) {
+            continue;
+        } catch (...) {
+            continue;
+        }
+        Block* const branch{AddLabel(block, block->stack, translated_target, function_id)};
         block->indirect_branches.push_back({
             .block = branch,
             .address = target,
+        });
+    }
+    if (block->indirect_branches.empty()) {
+        Block* const branch{AddLabel(block, block->stack, (pc + 1).Offset(), function_id)};
+        block->indirect_branches.push_back({
+            .block = branch,
+            .address = (pc + 1).Offset(),
         });
     }
     block->cond = IR::Condition{true};
