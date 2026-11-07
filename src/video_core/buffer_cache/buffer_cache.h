@@ -282,7 +282,7 @@ std::optional<VideoCore::RasterizerDownloadArea> BufferCache<P>::GetFlushArea(DA
     area->preemtive = !IsRegionGpuModified(device_addr_start_aligned,
                                            device_addr_end_aligned - device_addr_start_aligned);
     // A preflushable mark persists and downloads later GPU writes at every fence. Native titles
-    // instead keep read traps and flush on demand; EDEN_NX2_PREFLUSH=1 restores preflushing.
+    // can override this with EDEN_NX2_PREFLUSH=0 to force trap-and-flush on demand.
     static const std::optional<bool> forced_preflush = []() -> std::optional<bool> {
         const char* value = std::getenv("EDEN_NX2_PREFLUSH");
         if (value != nullptr) {
@@ -290,8 +290,7 @@ std::optional<VideoCore::RasterizerDownloadArea> BufferCache<P>::GetFlushArea(DA
         }
         return std::nullopt;
     }();
-    const bool preflush =
-        forced_preflush.value_or(!Tegra::g_nx2_ampere.load(std::memory_order_relaxed));
+    const bool preflush = forced_preflush.value_or(true);
     if (!area->preemtive) {
         if (Nx2DownloadTrace::g_enabled) [[unlikely]] {
             Nx2DownloadTrace::Marked(device_addr_start_aligned,

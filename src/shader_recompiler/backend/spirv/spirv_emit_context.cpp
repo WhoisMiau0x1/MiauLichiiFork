@@ -1871,9 +1871,17 @@ void EmitContext::DefineMesh(const IR::Program& program) {
         mesh_primitive_indices =
             DefineVariable(*this, TypeArray(U32[2], primitive_count),
                            spv::BuiltIn::PrimitiveLineIndicesEXT, spv::StorageClass::Output);
+    } else if (mesh_info.topology == 0) {
+        mesh_primitive_indices =
+            DefineVariable(*this, TypeArray(U32[1], primitive_count),
+                           spv::BuiltIn::PrimitivePointIndicesEXT, spv::StorageClass::Output);
+        if (runtime_info.fixed_state_point_size) {
+            mesh_point_size = DefineVariable(*this, TypeArray(F32[1], vertex_count),
+                                             spv::BuiltIn::PointSize, spv::StorageClass::Output);
+        }
     }
     std::array<Id, IR::NUM_GENERICS> generics[2]{};
-    Id point_size{}, primitive_layer{}, primitive_viewport{}, primitive_id_output{};
+    Id primitive_layer{}, primitive_viewport{}, primitive_id_output{};
     const auto per_primitive_builtin = [&](Id& variable, spv::BuiltIn builtin) {
         if (!Sirit::ValidId(variable)) {
             variable = DefineVariable(*this, TypeArray(U32[1], primitive_count), builtin,
@@ -1922,11 +1930,11 @@ void EmitContext::DefineMesh(const IR::Program& program) {
             return {output_position,
                     static_cast<u32>(attribute) - static_cast<u32>(IR::Attribute::PositionX), true};
         case IR::Attribute::PointSize:
-            if (!Sirit::ValidId(point_size)) {
-                point_size = DefineVariable(*this, TypeArray(F32[1], vertex_count),
-                                            spv::BuiltIn::PointSize, spv::StorageClass::Output);
+            if (!Sirit::ValidId(mesh_point_size)) {
+                mesh_point_size = DefineVariable(*this, TypeArray(F32[1], vertex_count),
+                                                 spv::BuiltIn::PointSize, spv::StorageClass::Output);
             }
-            return {point_size, ~0U, true};
+            return {mesh_point_size, ~0U, true};
         default:
             return {}; // per-primitive values in vertex lines have no vertex output
         }

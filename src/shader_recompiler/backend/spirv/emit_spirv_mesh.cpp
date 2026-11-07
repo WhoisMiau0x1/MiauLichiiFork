@@ -139,6 +139,11 @@ void MeshEpilogue(EmitContext& ctx) {
             if (convert_depth) {
                 ConvertDepth(ctx, vertex);
             }
+            if (mesh.topology == 0 && ctx.runtime_info.fixed_state_point_size && Sirit::ValidId(ctx.mesh_point_size)) {
+                ctx.OpStore(ctx.OpAccessChain(ctx.TypePointer(spv::StorageClass::Output, ctx.F32[1]),
+                                              ctx.mesh_point_size, vertex),
+                            ctx.Const(*ctx.runtime_info.fixed_state_point_size));
+            }
         };
         if (first + threads > mesh.max_vertices) {
             If(ctx, ctx.OpULessThan(ctx.U1, vertex, max_vertices), copy);
@@ -173,6 +178,12 @@ void MeshEpilogue(EmitContext& ctx) {
                 const Id output_indices{ctx.TypePointer(spv::StorageClass::Output, ctx.U32[2])};
                 ctx.OpStore(ctx.OpAccessChain(output_indices, ctx.mesh_primitive_indices, primitive),
                             ctx.OpCompositeConstruct(ctx.U32[2], std::span<const Id>(indices)));
+            } else if (mesh.topology == 0 && Sirit::ValidId(ctx.mesh_primitive_indices)) {
+                const Id address{ctx.OpIAdd(ctx.U32[1], primitive, ctx.Const(4U))};
+                const Id index{ctx.OpLoad(ctx.U32[1], SharedWord(ctx, ctx.mesh_map, address))};
+                const Id output_indices{ctx.TypePointer(spv::StorageClass::Output, ctx.U32[1])};
+                ctx.OpStore(ctx.OpAccessChain(output_indices, ctx.mesh_primitive_indices, primitive),
+                            index);
             }
             CopyLines(ctx, primitive, ctx.mesh_primitive_base, primitive_lines,
                       ctx.mesh_primitive_targets);
